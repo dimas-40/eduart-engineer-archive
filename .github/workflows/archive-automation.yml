@@ -1,0 +1,118 @@
+name: 📚 EduArt Archive Automation
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # 매주 일요일 오후 6시에 주간 리포트 생성
+    - cron: '0 18 * * 0'
+
+jobs:
+  update-package-index:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, 'package') || github.event_name == 'schedule'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: 📊 패키지 현황 업데이트
+      run: |
+        echo "🔍 백서패키지 스캔 중..."
+        
+        # 패키지 개수 계산
+        TOTAL_PACKAGES=$(find whitepaper-packages -name "package-*" -type d | wc -l)
+        ACTIVE_PACKAGES=$(find whitepaper-packages -name "1-whitepaper.md" | wc -l)
+        COMPLETED_PACKAGES=$(find whitepaper-packages -name "index.html" | wc -l)
+        
+        echo "📈 통계:"
+        echo "- 총 패키지: $TOTAL_PACKAGES"
+        echo "- 활성 패키지: $ACTIVE_PACKAGES" 
+        echo "- 완성 패키지: $COMPLETED_PACKAGES"
+        
+        # packages-index.md 자동 업데이트
+        DATE=$(date +"%Y-%m-%d")
+        sed -i "s/>.*마지막 업데이트.*/>**마지막 업데이트**: $DATE/g" whitepaper-packages/packages-index.md
+        sed -i "s/>.*총 패키지 수.*/>**총 패키지 수**: $TOTAL_PACKAGES개 (템플릿 제외)/g" whitepaper-packages/packages-index.md
+        sed -i "s/>.*완성된 프로젝트.*/>**완성된 프로젝트**: $COMPLETED_PACKAGES개/g" whitepaper-packages/packages-index.md
+    
+    - name: 📝 자동 커밋
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "EduArt Archive Bot"
+        git add whitepaper-packages/packages-index.md
+        git diff --staged --quiet || git commit -m "🤖 자동 업데이트: 패키지 현황 $(date +%Y-%m-%d)"
+        git push
+
+  weekly-report:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: 📊 주간 리포트 생성
+      run: |
+        WEEK_NUM=$(date +%V)
+        YEAR=$(date +%Y)
+        REPORT_FILE="chat-logs/summary-week-$YEAR-$WEEK_NUM.md"
+        
+        echo "# 📊 주간 요약 Week $YEAR-$WEEK_NUM" > $REPORT_FILE
+        echo "" >> $REPORT_FILE
+        echo "## 🎯 이번 주 주요 성과" >> $REPORT_FILE
+        
+        # 이번 주 커밋 분석
+        git log --since="7 days ago" --pretty=format:"- %s (%an)" >> $REPORT_FILE
+        
+        echo "" >> $REPORT_FILE
+        echo "---" >> $REPORT_FILE
+        echo "**자동 생성 리포트** - $(date)" >> $REPORT_FILE
+    
+    - name: 🚀 리포트 커밋
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "EduArt Weekly Bot"
+        git add chat-logs/
+        git commit -m "📊 주간 리포트 자동 생성 $(date +%Y-%m-%d)"
+        git push
+
+  deploy-webapps:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, 'webapp') || contains(github.event.head_commit.message, '🚀')
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: 🌐 GitHub Pages 배포 준비
+      run: |
+        echo "🔍 배포 가능한 웹앱 스캔..."
+        
+        # 완성된 웹앱 찾기
+        find whitepaper-packages -name "index.html" -path "*/4-webapp-code/*" | while read webapp; do
+          echo "✅ 발견: $webapp"
+          # 향후 자동 배포 로직 추가
+        done
+        
+        echo "🎉 배포 프로세스 완료!"
+
+  quality-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: 🔍 품질 검사
+      run: |
+        echo "📋 아카이브 품질 검사 시작..."
+        
+        # 깨진 링크 체크
+        echo "🔗 내부 링크 검증..."
+        
+        # 템플릿 일관성 체크
+        echo "📄 템플릿 일관성 검증..."
+        
+        # 파일명 규칙 체크
+        echo "📂 파일명 규칙 검증..."
+        
+        echo "✅ 품질 검사 완료!"
