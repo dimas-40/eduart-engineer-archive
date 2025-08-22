@@ -1,0 +1,357 @@
+import React, { useMemo, useState, useEffect } from "react";
+
+/**
+
+CC6 Cloud Shopping App (MVP)
+
+목적 중심(메뉴판)으로 클라우드 조합을 추천하고 가견적을 계산하는 싱글 파일 웹앱
+
+
+Tailwind CSS 기반. 외부 UI 라이브러리 없이 동작
+
+
+주요 섹션: 세트메뉴, 맞춤조합, 성장경로, 내 견적
+
+
+가격은 테스트/학습용 가견적(임의 수치)이며, Advanced 패널에서 조정 가능
+
+
+사용법:
+
+<CC6CloudShoppingApp />를 페이지에 렌더링하세요. */
+
+
+// ----------------------------- 유틸 ----------------------------- const KRW = (n:number) => n.toLocaleString("ko-KR") + "원"; const clamp = (n:number, a:number, b:number) => Math.min(Math.max(n, a), b);
+
+// ----------------------------- 데이터 모델 ----------------------------- export type PurposeKey = | "create:image" | "create:video" | "create:audio" | "create:text" | "dev:web" | "dev:train" | "dev:mobile" | "dev:api" | "deploy:portfolio" | "deploy:store" | "deploy:landing" | "deploy:demo" | "store:backup" | "store:assets" | "store:media" | "store:bizdocs" | "auto:payments" | "auto:email" | "auto:cron" | "auto:chatops" | "ops:monitor" | "ops:oneclick" | "ops:cost" | "ops:orchestrate";
+
+// CC6 타입 정의 const CC6_TYPES = { GPU: { label: "GPU형", color: "bg-purple-100 text-purple-700" }, CPU: { label: "CPU형", color: "bg-sky-100 text-sky-700" }, SRV: { label: "경량서버형", color: "bg-emerald-100 text-emerald-700" }, HOST: { label: "호스팅형", color: "bg-amber-100 text-amber-700" }, STOR: { label: "스토리지형", color: "bg-pink-100 text-pink-700" }, MCP: { label: "MCP형", color: "bg-zinc-100 text-zinc-700" }, } as const;
+
+// 토핑(추가 옵션) const TOPPINGS = [ { id: "backup", name: "백업(S3 Glacier)", flatKrw: 2000 }, { id: "cdn", name: "CDN(CloudFront)", flatKrw: 10000 }, { id: "monitor", name: "모니터링(CloudWatch)", flatKrw: 3000 }, { id: "team", name: "팀공유(IAM)", flatKrw: 5000 }, { id: "alerts", name: "비용알림(Budgets)", flatKrw: 0 }, ] as const;
+
+// 목적별 추천 매핑 const PURPOSES: Record<PurposeKey, { title: string; path: string[]; // 카테고리 경로 UI용 recommendation: Array<{ type:keyof typeof CC6_TYPES; name: string; detail: string; priceRef: string }>; // 설명 components: string[]; // 컴포넌트 키 (가격 엔진용) }> = { // 창작 "create:image": { title: "이미지 생성/편집", path: ["창작"], recommendation: [ { type: "GPU", name: "g5.xlarge + Ubuntu", detail: "ComfyUI/Auto1111", priceRef: "gpu_g5_xl" }, ], components: ["gpu_g5_xl"], }, "create:video": { title: "영상 편집/렌더링", path: ["창작"], recommendation: [ { type: "GPU", name: "g5.xlarge + Ubuntu", detail: "DaVinci Resolve", priceRef: "gpu_g5_xl" }, ], components: ["gpu_g5_xl"], }, "create:audio": { title: "음악 편집/믹싱", path: ["창작"], recommendation: [ { type: "CPU", name: "Windows VM", detail: "Reaper/DAW", priceRef: "cpu_t3_lg_win" }, ], components: ["cpu_t3_lg_win"], }, "create:text": { title: "글쓰기/문서 작업", path: ["창작"], recommendation: [ { type: "CPU", name: "Ubuntu VM", detail: "텍스트/집필도구", priceRef: "cpu_t3_sm" }, ], components: ["cpu_t3_sm"], }, // 개발 "dev:web": { title: "웹사이트/앱 개발", path: ["개발"], recommendation: [ { type: "CPU", name: "Ubuntu VM", detail: "Node.js/Python", priceRef: "cpu_t3_sm" }, { type: "HOST", name: "Amplify", detail: "정적/SSR 배포", priceRef: "host_amplify" }, ], components: ["cpu_t3_sm", "host_amplify"], }, "dev:train": { title: "AI 모델 훈련", path: ["개발"], recommendation: [ { type: "GPU", name: "g5.xlarge + Ubuntu", detail: "PyTorch/TRL", priceRef: "gpu_g5_xl" }, ], components: ["gpu_g5_xl"], }, "dev:mobile": { title: "모바일 앱 빌드", path: ["개발"], recommendation: [ { type: "CPU", name: "Ubuntu VM", detail: "Flutter/React Native", priceRef: "cpu_t3_lg" }, { type: "HOST", name: "Amplify", detail: "웹 배포/백엔드", priceRef: "host_amplify" }, ], components: ["cpu_t3_lg", "host_amplify"], }, "dev:api": { title: "API/백엔드 개발", path: ["개발"], recommendation: [ { type: "SRV", name: "Lambda + API Gateway", detail: "서버리스", priceRef: "srv_lambda" }, ], components: ["srv_lambda"], }, // 배포 "deploy:portfolio": { title: "포트폴리오 사이트", path: ["배포"], recommendation: [ { type: "HOST", name: "Amplify + GitHub", detail: "도메인 연결", priceRef: "host_amplify" }, { type: "STOR", name: "S3 + CloudFront", detail: "정적에셋/캐시", priceRef: "stor_s3_cf" }, ], components: ["host_amplify", "stor_s3_cf"], }, "deploy:store": { title: "앱 스토어 배포", path: ["배포"], recommendation: [ { type: "CPU", name: "빌드 VM", detail: "CI/CD", priceRef: "cpu_t3_lg" }, { type: "HOST", name: "Amplify", detail: "웹 대시보드", priceRef: "host_amplify" }, ], components: ["cpu_t3_lg", "host_amplify"], }, "deploy:landing": { title: "랜딩 페이지", path: ["배포"], recommendation: [ { type: "HOST", name: "Amplify", detail: "정적/SSR", priceRef: "host_amplify" }, ], components: ["host_amplify"], }, "deploy:demo": { title: "데모/프로토타입", path: ["배포"], recommendation: [ { type: "HOST", name: "GitHub Pages", detail: "정적 데모", priceRef: "host_pages" }, ], components: ["host_pages"], }, // 저장 "store:backup": { title: "파일 백업", path: ["저장"], recommendation: [ { type: "STOR", name: "S3 + Glacier", detail: "장기보관", priceRef: "stor_glacier" }, ], components: ["stor_glacier"], }, "store:assets": { title: "작업 결과물 보관", path: ["저장"], recommendation: [ { type: "STOR", name: "S3 + CloudFront", detail: "아티팩트 배포", priceRef: "stor_s3_cf" }, ], components: ["stor_s3_cf"], }, "store:media": { title: "사진/영상 아카이브", path: ["저장"], recommendation: [ { type: "STOR", name: "S3 Intelligent-Tiering", detail: "자동 계층", priceRef: "stor_s3_intel" }, ], components: ["stor_s3_intel"], }, "store:bizdocs": { title: "비즈니스 문서", path: ["저장"], recommendation: [ { type: "STOR", name: "S3 + SSE 암호화", detail: "규정 준수", priceRef: "stor_s3_enc" }, ], components: ["stor_s3_enc"], }, // 자동화 "auto:payments": { title: "결제 처리", path: ["자동화"], recommendation: [ { type: "SRV", name: "Lambda + Stripe", detail: "웹훅 처리", priceRef: "srv_lambda" }, ], components: ["srv_lambda"], }, "auto:email": { title: "이메일 알림", path: ["자동화"], recommendation: [ { type: "SRV", name: "Lambda + SES", detail: "트랜잭션 메일", priceRef: "srv_lambda" }, ], components: ["srv_lambda"], }, "auto:cron": { title: "정기 작업", path: ["자동화"], recommendation: [ { type: "SRV", name: "EventBridge + Lambda", detail: "크론", priceRef: "srv_lambda" }, ], components: ["srv_lambda"], }, "auto:chatops": { title: "Discord/Slack 알림", path: ["자동화"], recommendation: [ { type: "SRV", name: "Lambda + Webhooks", detail: "ChatOps", priceRef: "srv_lambda" }, ], components: ["srv_lambda"], }, // 관리 "ops:monitor": { title: "모니터링/대시보드", path: ["관리"], recommendation: [ { type: "MCP", name: "EC2 관제 + 대시보드", detail: "MCP/에이전트", priceRef: "mcp_vm" }, ], components: ["mcp_vm"], }, "ops:oneclick": { title: "원클릭 배포", path: ["관리"], recommendation: [ { type: "MCP", name: "자동화 에이전트", detail: "배포 파이프라인", priceRef: "mcp_vm" }, ], components: ["mcp_vm"], }, "ops:cost": { title: "비용 관리", path: ["관리"], recommendation: [ { type: "MCP", name: "Budget 알림", detail: "월간 리포트", priceRef: "mcp_vm" }, ], components: ["mcp_vm"], }, "ops:orchestrate": { title: "전체 오케스트레이션", path: ["관리"], recommendation: [ { type: "MCP", name: "Claude MCP", detail: "오케스트레이터", priceRef: "mcp_vm" }, ], components: ["mcp_vm"], }, };
+
+// 가격 컴포넌트 테이블(학습용 가견적, 기본 시간/월 반영) // 고급 설정에서 timeHoursPerMonth 조절 가능 const DEFAULT_COSTS = { // 인스턴스 (시간당) gpu_g5_xl_hr: 1900, // KRW/h (임의). 기본 40h 사용 시 76,000원 cpu_t3_sm_hr: 80,   // KRW/h cpu_t3_lg_hr: 120,  // KRW/h cpu_t3_lg_win_hr: 150, // KRW/h (Windows 라이선스 가산 가정)
+
+// 호스팅/서버리스/스토리지 (월 정액 추정) host_amplify_flat: 5000, host_pages_flat: 0, srv_lambda_flat: 2000, stor_s3_cf_flat: 8000, stor_glacier_flat: 2000, stor_s3_intel_flat: 6000, stor_s3_enc_flat: 4000, mcp_vm_hr: 80, };
+
+// 컴포넌트 스펙(가격 엔진에서 참조) const COMPONENTS: Record<string, { kind: "hourly" | "flat"; label: string; hrKey?: keyof typeof DEFAULT_COSTS; flatKey?: keyof typeof DEFAULT_COSTS; defaultHours?: number }> = { gpu_g5_xl: { kind: "hourly", label: "GPU g5.xlarge", hrKey: "gpu_g5_xl_hr", defaultHours: 40 }, cpu_t3_sm: { kind: "hourly", label: "CPU t3.small", hrKey: "cpu_t3_sm_hr", defaultHours: 60 }, cpu_t3_lg: { kind: "hourly", label: "CPU t3.large", hrKey: "cpu_t3_lg_hr", defaultHours: 60 }, cpu_t3_lg_win: { kind: "hourly", label: "CPU t3.large (Windows)", hrKey: "cpu_t3_lg_win_hr", defaultHours: 60 }, host_amplify: { kind: "flat", label: "Amplify Hosting", flatKey: "host_amplify_flat" }, host_pages: { kind: "flat", label: "GitHub Pages", flatKey: "host_pages_flat" }, srv_lambda: { kind: "flat", label: "Lambda(Serverless)", flatKey: "srv_lambda_flat" }, stor_s3_cf: { kind: "flat", label: "S3 + CloudFront", flatKey: "stor_s3_cf_flat" }, stor_glacier: { kind: "flat", label: "S3 Glacier", flatKey: "stor_glacier_flat" }, stor_s3_intel: { kind: "flat", label: "S3 Intelligent-Tiering", flatKey: "stor_s3_intel_flat" }, stor_s3_enc: { kind: "flat", label: "S3 + Encryption", flatKey: "stor_s3_enc_flat" }, mcp_vm: { kind: "hourly", label: "MCP VM", hrKey: "mcp_vm_hr", defaultHours: 120 }, };
+
+// 세트 메뉴 const SET_MENUS = [ { id: "ramen", name: "🍜 라면 세트 (입문)", desc: "글쓰기 + 포트폴리오", includes: ["create:text", "deploy:portfolio"], toppings: ["backup", "alerts"], }, { id: "bento", name: "🍱 도시락 세트 (크리에이터)", desc: "AI 그림 + 포트폴리오 + 백업", includes: ["create:image", "deploy:portfolio", "store:assets"], toppings: ["cdn", "backup"], }, { id: "fullcourse", name: "🍖 풀코스 세트 (프로듀서)", desc: "음악 + 영상 + 자동화", includes: ["create:audio", "create:video", "auto:cron"], toppings: ["monitor", "alerts", "team"], }, ] as const;
+
+// RPG 성장 단계(시각적 안내) const LEVELS = [ { level: 1, title: "개인", tips: "GPU 또는 호스팅 하나로 시작" }, { level: 2, title: "소규모 팀", tips: "GPU + 호스팅 조합" }, { level: 3, title: "스튜디오", tips: "GPU + CPU + 자동화" }, { level: 4, title: "기업", tips: "전체 CC6 + 고가용성" }, ];
+
+// ----------------------------- 컴포넌트 ----------------------------- const Section: React.FC<{title:string; subtitle?:string; right?:React.ReactNode}> = ({title, subtitle, right, children}) => (
+
+  <section className="mb-8">
+    <div className="flex items-end justify-between gap-4 mb-3">
+      <div>
+        <h2 className="text-xl font-bold">{title}</h2>
+        {subtitle && <p className="text-sm text-zinc-500 mt-1">{subtitle}</p>}
+      </div>
+      {right}
+    </div>
+    <div className="bg-white/70 rounded-2xl p-4 shadow-sm ring-1 ring-zinc-100">
+      {children}
+    </div>
+  </section>
+);const Chip: React.FC<{active?:boolean; onClick?:()=>void; children:React.ReactNode}> = ({active, onClick, children}) => ( <button onClick={onClick} className={[ "px-3 py-1 rounded-full border text-sm transition", active ? "bg-black text-white border-black" : "bg-white hover:bg-zinc-50 border-zinc-200" ].join(" ")}
+
+> {children}</button> );
+
+
+
+const Pill: React.FC<{scheme?:string}> = ({scheme="bg-zinc-100 text-zinc-700", children}) => ( <span className={px-2.5 py-1 rounded-full text-xs font-medium ${scheme}}>{children}</span> );
+
+// ----------------------------- 메인 앱 ----------------------------- export default function CC6CloudShoppingApp(){ // 선택 상태 const [selectedPurposes, setSelectedPurposes] = useState<PurposeKey[]>([]); const [selectedToppings, setSelectedToppings] = useState<string[]>([]); const [tab, setTab] = useState<"set"|"custom"|"levels"|"quote">("set");
+
+// 고급 설정(가견적) const [costs, setCosts] = useState(DEFAULT_COSTS); const [hours, setHours] = useState<Record<string, number>>(()=>{ // 각 컴포넌트별 기본 시간 const h: Record<string, number> = {}; Object.entries(COMPONENTS).forEach(([key, spec])=>{ if(spec.kind === "hourly") h[key] = spec.defaultHours ?? 40; }); return h; });
+
+// 로컬 스토리지 로드/세이브 useEffect(()=>{ try{ const raw = localStorage.getItem("cc6_app_state_v1"); if(raw){ const s = JSON.parse(raw); if(s.selectedPurposes) setSelectedPurposes(s.selectedPurposes); if(s.selectedToppings) setSelectedToppings(s.selectedToppings); if(s.costs) setCosts(s.costs); if(s.hours) setHours(s.hours); } }catch{} },[]); useEffect(()=>{ const payload = { selectedPurposes, selectedToppings, costs, hours }; localStorage.setItem("cc6_app_state_v1", JSON.stringify(payload)); },[selectedPurposes, selectedToppings, costs, hours]);
+
+// 유도: 목적별 컴포넌트 집합 const componentKeys = useMemo(()=>{ const keys = new Set<string>(); selectedPurposes.forEach(k => PURPOSES[k]?.components.forEach(c=>keys.add(c))); return [...keys]; },[selectedPurposes]);
+
+// 가견적 계산 const baseCost = useMemo(()=>{ let sum = 0; for(const key of componentKeys){ const spec = COMPONENTS[key]; if(!spec) continue; if(spec.kind === "hourly" && spec.hrKey){ const hr = costs[spec.hrKey]; const h = hours[key] ?? (spec.defaultHours ?? 0); sum += hr * h; } else if(spec.kind === "flat" && spec.flatKey){ sum += costs[spec.flatKey]; } } return sum; },[componentKeys, costs, hours]);
+
+const toppingsCost = useMemo(()=>{ return selectedToppings.reduce((acc, id)=>{ const t = TOPPINGS.find(x=>x.id===id); return acc + (t?.flatKrw ?? 0); }, 0); },[selectedToppings]);
+
+const totalCost = baseCost + toppingsCost;
+
+// 추천 CC6 타입 집계 const cc6Types = useMemo(()=>{ const set = new Set<keyof typeof CC6_TYPES>(); selectedPurposes.forEach(key => { PURPOSES[key].recommendation.forEach(r=> set.add(r.type)); }); return [...set]; },[selectedPurposes]);
+
+// 스펙 YAML 생성 const specYAML = useMemo(()=>{ const lines:string[] = []; lines.push("cc6_plan:"); lines.push("  purposes:"); selectedPurposes.forEach(k=>{ lines.push(    - key: ${k}); lines.push(      title: \"${PURPOSES[k].title}\"); const recs = PURPOSES[k].recommendation.map(r=>${CC6_TYPES[r.type].label} - ${r.name} (${r.detail})); lines.push(      recommend: [${recs.map(v=>"${v}").join(", ")}]); }); lines.push("  cc6_types:"); cc6Types.forEach(t=>{ lines.push(    - ${CC6_TYPES[t].label}); }); lines.push("  components:"); componentKeys.forEach(k=>{ const spec = COMPONENTS[k]; if(spec.kind === "hourly"){ lines.push(    - id: ${k}); lines.push(      label: \"${spec.label}\"); lines.push(      kind: hourly); lines.push(      unit_krw_per_hour: ${spec.hrKey ? costs[spec.hrKey!] : 0}); lines.push(      hours_per_month: ${hours[k] ?? spec.defaultHours ?? 0}); } else { lines.push(    - id: ${k}); lines.push(      label: \"${spec.label}\"); lines.push(      kind: flat); lines.push(      flat_krw_per_month: ${spec.flatKey ? costs[spec.flatKey!] : 0}); } }); lines.push("  toppings:"); selectedToppings.forEach(id=>{ const t = TOPPINGS.find(x=>x.id===id)!; lines.push(    - id: ${id}); lines.push(      name: \"${t.name}\"); lines.push(      flat_krw_per_month: ${t.flatKrw}); }); lines.push("  estimate:"); lines.push(    base_krw: ${baseCost}); lines.push(    toppings_krw: ${toppingsCost}); lines.push(    total_krw: ${totalCost}); lines.push("  disclaimer: "본 견적은 학습/테스트용 임의 수치입니다. 실제 요금은 리전/사용량/정책에 따라 달라집니다.""); return lines.join("\n"); },[selectedPurposes, cc6Types, componentKeys, costs, hours, selectedToppings, baseCost, toppingsCost, totalCost]);
+
+// 복사 const copy = async (text:string) => { try { await navigator.clipboard.writeText(text); alert("복사되었습니다"); } catch { /* ignore */ } };
+
+// UI 헬퍼: 목적 카드 const PurposeCard: React.FC<{k:PurposeKey}> = ({k}) => { const active = selectedPurposes.includes(k); const toggle = () => setSelectedPurposes(p=> active ? p.filter(x=>x!==k) : [...p, k]); const rec = PURPOSES[k].recommendation[0]; return ( <button onClick={toggle} className={text-left rounded-2xl border p-4 transition shadow-sm hover:shadow ${active?"border-black bg-black text-white":"border-zinc-200 bg-white"}}> <div className="flex items-center justify-between"> <h4 className="font-semibold">{PURPOSES[k].title}</h4> <Pill scheme={CC6_TYPES[rec.type].color}>{CC6_TYPES[rec.type].label}</Pill> </div> <p className={mt-1 text-sm ${active?"text-zinc-200":"text-zinc-500"}}>{rec.name} · {rec.detail}</p> </button> ); };
+
+// 카테고리 묶기 const groups: Array<{name:string; keys: PurposeKey[]}> = [ { name: "창작", keys: ["create:image","create:video","create:audio","create:text"] }, { name: "개발", keys: ["dev:web","dev:train","dev:mobile","dev:api"] }, { name: "배포", keys: ["deploy:portfolio","deploy:store","deploy:landing","deploy:demo"] }, { name: "저장", keys: ["store:backup","store:assets","store:media","store:bizdocs"] }, { name: "자동화", keys: ["auto:payments","auto:email","auto:cron","auto:chatops"] }, { name: "관리", keys: ["ops:monitor","ops:oneclick","ops:cost","ops:orchestrate"] }, ];
+
+// 렌더 return ( <div className="max-w-6xl mx-auto px-4 py-8"> <header className="mb-6"> <h1 className="text-2xl md:text-3xl font-black tracking-tight">CC6 클라우드 쇼핑몰 (MVP)</h1> <p className="text-zinc-600 mt-2">"내가 하고 싶은 게 뭔데?" → 세트/토핑 클릭으로 조합이 완성되고, 학습용 가견적이 바로 계산됩니다.</p> </header>
+
+{/* 탭 */}
+  <div className="flex gap-2 mb-4">
+    <Chip active={tab==="set"} onClick={()=>setTab("set")}>세트메뉴</Chip>
+    <Chip active={tab==="custom"} onClick={()=>setTab("custom")}>맞춤조합</Chip>
+    <Chip active={tab==="levels"} onClick={()=>setTab("levels")}>성장경로</Chip>
+    <Chip active={tab==="quote"} onClick={()=>setTab("quote")}>내 견적</Chip>
+  </div>
+
+  {tab==="set" && (
+    <>
+      <Section title="가격대별 세트 메뉴" subtitle="입문→프로듀서까지 클릭 한 번으로 구성">
+        <div className="grid md:grid-cols-3 gap-4">
+          {SET_MENUS.map(set=>{
+            const apply = () => {
+              setSelectedPurposes(set.includes as PurposeKey[]);
+              setSelectedToppings(set.toppings);
+              setTab("quote");
+            };
+            return (
+              <div key={set.id} className="rounded-2xl border p-4 bg-white shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-lg">{set.name}</h3>
+                    <p className="text-sm text-zinc-500">{set.desc}</p>
+                  </div>
+                  <button onClick={apply} className="px-3 py-1.5 rounded-full bg-black text-white text-sm">담기</button>
+                </div>
+                <div className="mt-3">
+                  <p className="text-xs text-zinc-500">구성</p>
+                  <ul className="mt-1 space-y-1 text-sm">
+                    {set.includes.map(k=> (
+                      <li key={k} className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-zinc-300"/>
+                        {PURPOSES[k].title}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-zinc-500 mt-3">토핑</p>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {set.toppings.map(id=>{
+                      const t = TOPPINGS.find(x=>x.id===id)!;
+                      return <Pill key={id}>{t.name}</Pill>
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section title="가이드 철학" subtitle="기술용어보다 목적→옵션→조합→비용의 직선 흐름">
+        <div className="grid md:grid-cols-4 gap-3">
+          {Object.values(CC6_TYPES).map((v,i)=> (
+            <div key={i} className="rounded-2xl border p-4">
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold">{v.label}</h4>
+                <span className={`text-xs px-2 py-0.5 rounded ${v.color}`}>CC6</span>
+              </div>
+              <p className="text-sm text-zinc-500 mt-1">역할 특화 타입. 메뉴판에서 자동으로 조합됩니다.</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+    </>
+  )}
+
+  {tab==="custom" && (
+    <>
+      <Section title="목적 선택" subtitle="필요한 것만 체크하면 조합과 견적이 자동으로 구성됩니다." right={<button onClick={()=>{setSelectedPurposes([]); setSelectedToppings([]);}} className="text-sm underline">초기화</button>}>
+        {groups.map(g=> (
+          <div key={g.name} className="mb-5">
+            <h3 className="font-semibold mb-2">{g.name}</h3>
+            <div className="grid md:grid-cols-2 gap-3">
+              {g.keys.map(k=> <PurposeCard key={k} k={k}/>) }
+            </div>
+          </div>
+        ))}
+      </Section>
+
+      <Section title="토핑 추가" subtitle="추가 기능을 토핑처럼 얹어보세요.">
+        <div className="flex flex-wrap gap-2">
+          {TOPPINGS.map(t=>{
+            const active = selectedToppings.includes(t.id);
+            const toggle = ()=> setSelectedToppings(v=> active? v.filter(x=>x!==t.id) : [...v, t.id]);
+            return (
+              <Chip key={t.id} active={active} onClick={toggle}>
+                {t.name} · {KRW(t.flatKrw)}
+              </Chip>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section title="구성 미리보기" subtitle="선택에 따라 필요한 인프라 컴포넌트가 자동으로 모입니다.">
+        {componentKeys.length === 0 ? (
+          <p className="text-sm text-zinc-500">목적을 선택하면 여기에 필요한 구성 요소가 나타납니다.</p>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {componentKeys.map(key=>{
+              const spec = COMPONENTS[key];
+              return (
+                <div key={key} className="rounded-2xl border p-4 bg-white">
+                  <h4 className="font-semibold">{spec.label}</h4>
+                  {spec.kind === "hourly" ? (
+                    <div className="mt-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">단가(시간)</span>
+                        <span className="font-medium">{KRW(costs[spec.hrKey!])}/h</span>
+                      </div>
+                      <div className="mt-2">
+                        <label className="text-xs text-zinc-500">월 사용시간: {hours[key]}h</label>
+                        <input type="range" min={0} max={300} value={hours[key]??0}
+                               onChange={e=> setHours(h=> ({...h, [key]: parseInt(e.target.value)}))}
+                               className="w-full"/>
+                      </div>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-zinc-500">소계</span>
+                        <span className="font-semibold">{KRW((hours[key]??0) * (costs[spec.hrKey!]))}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm flex items-center justify-between">
+                      <span className="text-zinc-500">월 정액</span>
+                      <span className="font-semibold">{KRW(costs[spec.flatKey!])}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+    </>
+  )}
+
+  {tab==="levels" && (
+    <>
+      <Section title="RPG 성장 경로" subtitle="학습/운영 단계에 따라 확장 시나리오를 제시합니다.">
+        <div className="grid md:grid-cols-4 gap-3">
+          {LEVELS.map(l=> (
+            <div key={l.level} className="rounded-2xl border p-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-zinc-900 text-white grid place-items-center font-bold">{l.level}</div>
+                <h4 className="font-semibold">{l.title}</h4>
+              </div>
+              <p className="text-sm text-zinc-500 mt-2">{l.tips}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="레벨업 추천" subtitle="단계에 맞는 세트메뉴를 바로 담을 수 있어요.">
+        <div className="flex flex-wrap gap-3">
+          {SET_MENUS.map(s=> (
+            <Chip key={s.id} onClick={()=>{setSelectedPurposes(s.includes as PurposeKey[]); setSelectedToppings(s.toppings); setTab("quote");}}>
+              {s.name}
+            </Chip>
+          ))}
+        </div>
+      </Section>
+    </>
+  )}
+
+  {tab==="quote" && (
+    <>
+      <Section title="내 견적" subtitle="학습용 가견적입니다. 실제 과금과 다를 수 있어요.">
+        <div className="grid md:grid-cols-3 gap-4">
+          <div className="md:col-span-2">
+            <div className="rounded-2xl border p-4 bg-white">
+              <h4 className="font-semibold">선택한 목적</h4>
+              {selectedPurposes.length === 0 ? (
+                <p className="text-sm text-zinc-500 mt-1">아직 선택된 목적이 없어요. 세트메뉴 또는 맞춤조합에서 담아보세요.</p>
+              ) : (
+                <ul className="mt-2 space-y-1 text-sm">
+                  {selectedPurposes.map(k=> (
+                    <li key={k} className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-zinc-300"/>
+                      {PURPOSES[k].title}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-4">
+                <h4 className="font-semibold">토핑</h4>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {selectedToppings.length===0 && <span className="text-sm text-zinc-500">선택된 토핑 없음</span>}
+                  {selectedToppings.map(id=>{
+                    const t = TOPPINGS.find(x=>x.id===id)!;
+                    return <Pill key={id}>{t.name}</Pill>
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border p-4 bg-white mt-4">
+              <h4 className="font-semibold">YAML 스펙</h4>
+              <pre className="mt-2 bg-zinc-50 p-3 rounded-lg text-xs overflow-auto whitespace-pre-wrap">{specYAML}</pre>
+              <div className="flex gap-2 mt-2">
+                <button onClick={()=>copy(specYAML)} className="px-3 py-1.5 rounded bg-black text-white text-sm">복사</button>
+                <button onClick={()=>{
+                  const blob = new Blob([specYAML], {type: 'text/yaml'});
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url; a.download = 'cc6-plan.yaml'; a.click(); URL.revokeObjectURL(url);
+                }} className="px-3 py-1.5 rounded border text-sm">다운로드</button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="rounded-2xl border p-4 bg-white sticky top-6">
+              <h4 className="font-semibold">가견적 합계</h4>
+              <div className="mt-2 text-sm flex items-center justify-between"><span className="text-zinc-500">기본</span><span className="font-semibold">{KRW(baseCost)}</span></div>
+              <div className="mt-1 text-sm flex items-center justify-between"><span className="text-zinc-500">토핑</span><span className="font-semibold">{KRW(toppingsCost)}</span></div>
+              <div className="mt-2 pt-2 border-t flex items-center justify-between text-lg font-extrabold">
+                <span>총합</span>
+                <span>{KRW(totalCost)}</span>
+              </div>
+              <p className="text-xs text-zinc-500 mt-2">※ 실제 요금은 리전/할인/용량/데이터 전송량에 따라 크게 달라질 수 있습니다.</p>
+
+              <details className="mt-4">
+                <summary className="cursor-pointer text-sm font-semibold">Advanced (단가/시간 조정)</summary>
+                <div className="pt-3 space-y-3">
+                  {Object.entries(COMPONENTS).map(([key, spec])=> (
+                    <div key={key} className="rounded-lg border p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">{spec.label}</span>
+                      </div>
+                      {spec.kind === "hourly" ? (
+                        <div className="grid grid-cols-2 gap-3 mt-2 items-center">
+                          <label className="text-xs text-zinc-500">단가(KRW/h)</label>
+                          <input type="number" className="border rounded px-2 py-1 text-sm"
+                                 value={costs[spec.hrKey!]}
+                                 onChange={e=> setCosts(c=> ({...c, [spec.hrKey!]: clamp(parseInt(e.target.value||"0"),0, 100000)}))}/>
+                          <label className="text-xs text-zinc-500">월 사용시간</label>
+                          <input type="number" className="border rounded px-2 py-1 text-sm"
+                                 value={hours[key]??0}
+                                 onChange={e=> setHours(h=> ({...h, [key]: clamp(parseInt(e.target.value||"0"),0, 720)}))}/>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-3 mt-2 items-center">
+                          <label className="text-xs text-zinc-500">월 정액(KRW)</label>
+                          <input type="number" className="border rounded px-2 py-1 text-sm"
+                                 value={costs[spec.flatKey!]}
+                                 onChange={e=> setCosts(c=> ({...c, [spec.flatKey!]: clamp(parseInt(e.target.value||"0"),0, 10000000)}))}/>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+      </Section>
+    </>
+  )}
+
+  <footer className="text-xs text-zinc-500 mt-10">
+    © 2025 CC6 Cloud Shopping MVP · 본 앱의 가격은 학습용 가견적이며 실제 서비스와 다릅니다.
+  </footer>
+</div>
+
+); }
+
